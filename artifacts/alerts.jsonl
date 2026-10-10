@@ -1,0 +1,1 @@
+{"ts": "2026-10-10T08:09:41.384744+00:00", "title": "Guardrail: prompt injection blocked", "severity": "warning", "guard": "input_guard", "reason": "Validation failed for field with errors: Prompt injection detected: matched 'Forget all previous instructions'", "action": "run stopped, needs review"}

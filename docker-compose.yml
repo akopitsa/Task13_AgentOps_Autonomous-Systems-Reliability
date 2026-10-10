@@ -1,0 +1,18 @@
+# Self-hosted Arize Phoenix (UI + OTLP collector). Дані трейсів лишаються локально.
+#   docker compose up -d   →  UI: http://localhost:6006
+services:
+  phoenix:
+    image: arizephoenix/phoenix:version-20.20.0
+    container_name: phoenix-hw
+    ports:
+      - "6006:6006"   # UI + OTLP/HTTP (/v1/traces) + GraphQL
+      - "4317:4317"   # OTLP/gRPC
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+    volumes:
+      - phoenix-hw-data:/mnt/data
+    restart: unless-stopped
+
+volumes:
+  phoenix-hw-data:
+    name: phoenix-hw-data

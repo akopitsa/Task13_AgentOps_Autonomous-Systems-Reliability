@@ -1,0 +1,88 @@
+# Lab 4 · Eval regression gate
+# Кожен PR: unit-тести (без LLM) → eval golden dataset на реальному агенті (Ollama у раннері)
+# → якщо accuracy/relevance нижче порогу, job падає. Зробіть "eval-gate" required status check
+# у Settings → Branches → Branch protection, щоб merge блокувався.
+name: agent-eval
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      prompt_version:
+        description: "PROMPT_VERSION to evaluate"
+        default: "v1.1"
+
+concurrency:
+  group: agent-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  LLM_MODEL: llama3.1:8b
+  EVAL_MIN_ACCURACY: "0.8"
+  EVAL_MIN_RELEVANCE: "0.7"
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TRACING_BACKEND: none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Unit tests (guardrails, budget, circuit breaker, eval checks)
+        run: pytest -q tests
+
+  eval-gate:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      TRACING_BACKEND: none
+      DEPLOY_ENV: ci
+      LLM_TIMEOUT_S: "900"
+      PROMPT_VERSION: ${{ github.event.inputs.prompt_version || 'v1.1' }}
+      OLLAMA_MODELS: ${{ github.workspace }}/.ollama-models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Cache Ollama model
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.OLLAMA_MODELS }}
+          key: ollama-${{ env.LLM_MODEL }}
+
+      - name: Install & start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          sudo systemctl stop ollama || true
+          mkdir -p "$OLLAMA_MODELS"
+          nohup ollama serve > ollama.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:11434/api/tags && break; sleep 2; done
+          ollama pull "$LLM_MODEL"
+
+      - name: Run golden dataset + threshold gate
+        run: python -m evals.run_eval --min-accuracy "$EVAL_MIN_ACCURACY" --min-relevance "$EVAL_MIN_RELEVANCE"
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-${{ env.PROMPT_VERSION }}
+          path: |
+            artifacts/eval_report.json
+            artifacts/eval_report.md
+            artifacts/guardrails_audit.jsonl
+            ollama.log
